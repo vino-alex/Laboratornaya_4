@@ -1,0 +1,120 @@
+---
+title: "Лабораторная 4"
+author: "Виноградов Александр"
+date: "11 04 2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Вариант 3
+Задачи:
+
+С помощью «knitr» создать html-отчёт с короткими пояснениями к данным и с двумя картами:
+1.Карта-хороплет регионов РФ, входящих в состав федерального округа, указанного в варианте, построенная функцией spplot()по данным сборников “Регионы России” за последний доступный год 16.
+2.Такая же карта но со статистикой за 2010 год, построенная функцией ggplot().
+
+Приволжский федеральный округ, любой показатель из раздела «Уровень жизни населения» (ОСНОВНЫЕ ПОКАЗАТЕЛИ ДЕНЕЖНЫХ ДОХОДОВ НАСЕЛЕНИЯ В РЕАЛЬНОМ ВЫРАЖЕНИИ (2010, 2019 года)).
+
+# Библиотеки
+```{r, message = F, warning=F}
+library('R.utils')               # gunzip() для распаковки архивов 
+library('sp')                    # функция spplot()
+library('ggplot2')               # функция ggplot()
+library('RColorBrewer')          # цветовые палитры
+require('rgdal')                 # функция readOGR()
+library('broom')                 # функция tidy()
+require('dplyr')                 # функция join()
+library('scales')                # функция pretty_breaks()
+library('mapproj')               # проекции для карт
+library('gpclib')
+library('maptools')
+require('plyr')                  # функция join()
+gpclibPermit()
+```
+
+# Первая карта
+```{r, warning=F, message=F}
+Regions <- readOGR("./data/admin_level_4.shp")
+
+# Индексы регионов Приволжского федерального округа
+regions <- c(4, 19, 29, 43, 44, 49, 47, 53, 77, 78, 30, 41, 40, 54)
+Regions <- Regions[regions, ]
+
+# Загружаем данные со статистикой за 2010 год
+gks10 <- read.csv2('./data/gks2010.csv', stringsAsFactors = F)
+gks10
+
+# Преобразуем имена в факторы
+Regions@data$name <- as.factor(Regions@data$name)
+
+# Делаем слияние шейп-файла с данными с росстата
+Regions@data <- merge(Regions@data, gks10,
+                      by.x = 'name', by.y = 'region', 
+                      sort = F)
+
+# Задаём палитру
+mypalette <-colorRampPalette(c('whitesmoke', 'coral3'))
+
+# Строим карту
+spplot(Regions, 'statistic', col.regions = mypalette(16),
+       col = 'coral4', main = 'ОСНОВНЫЕ ПОКАЗАТЕЛИ ДЕНЕЖНЫХ ДОХОДОВ\nНАСЕЛЕНИЯ В РЕАЛЬНОМ ВЫРАЖЕНИИ',
+       panel = function(x, y, z, subscripts, ...){
+         panel.polygonsplot(x, y, z, subscripts, ...)
+         sp.text(coordinates(Regions),
+                 Regions$name[subscripts], cex = 0.7)
+       })
+
+# Очищаем память
+rm(Regions)
+
+```
+
+# Вторая карта
+
+```{r, message=F, warning=F}
+gpclibPermit()
+
+# Загрузка данных зза 2019 год
+gks20 <- read.csv2('./data/gks2019.csv', stringsAsFactors = F)
+gks20
+
+# Считываем шейп-файл
+Regions <- readOGR('./data/admin_level_4.shp')
+
+# Индексы шейп файла
+regions <- c(4, 19, 29, 43, 44, 49, 47, 53, 77, 78, 30, 41, 40, 54)
+
+# Оставляем нужные нам регионы
+Regions <- Regions[regions, ]
+
+# Создаем столбец id для связи с другими таблицами
+Regions@data$id <- Regions@data$name
+# Преобразовываем SpatialPolygonsDataFrame в data.frame
+Regions.points <- fortify(Regions, region = 'id')
+# Добавляем к координатам сведения о регионах
+Regions.df <- join(Regions.points, Regions@data, by = 'id')
+
+gks20$id <- gks20$region
+Regions.df <- join(Regions.df, gks20[, c('id', 'statistic')], by = 'id')
+
+# Координаты центров полигонов (для подписей регионов)
+centroids.df <- as.data.frame(coordinates(Regions))
+
+centroids.df$id <- Regions@data$id
+colnames(centroids.df) <- c('long', 'lat', 'id')
+
+# Строим карту
+ggplot() + geom_polygon(data = Regions.df,
+                              aes(long, lat, group = group, fill = statistic)) +
+  geom_path(data = Regions.df, aes(long, lat, group = group),
+            color = 'coral4') +
+  coord_map(projection = 'gilbert') +
+  scale_fill_distiller(palette = 'OrRd', direction = 1,
+                       breaks = pretty_breaks(n = 5)) +
+  labs(x = 'Долгота', y = 'Широта',
+       title = 'ОСНОВНЫЕ ПОКАЗАТЕЛИ ДЕНЕЖНЫХ ДОХОДОВ\nНАСЕЛЕНИЯ В РЕАЛЬНОМ ВЫРАЖЕНИИ') +
+  geom_text(data = centroids.df, aes(long, lat, label = id))
+```
